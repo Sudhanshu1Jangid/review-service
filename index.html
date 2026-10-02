@@ -71,6 +71,7 @@
     const $ = id => document.getElementById(id);
     const params = new URLSearchParams(location.search);
     const isSetup = params.has('setup');
+    const isWebsite = ['http:', 'https:'].includes(location.protocol);
     function googleLink(value) {
       try { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password && !url.port && ['search.google.com','www.google.com','google.com','maps.google.com','g.page','maps.app.goo.gl'].includes(url.hostname) ? url.href : ''; } catch { return ''; }
     }
@@ -103,12 +104,18 @@
       $('generate').disabled = true; $('copy').disabled = true; $('review').readOnly = true;
       $('generate').textContent = 'Writing…'; message('Writing your draft…');
       try {
+        if (!isWebsite) throw new Error('AI writing needs the hosted review page. This downloaded file can only be used to write your review manually.');
         const response = await fetch('/api/generate',{ method:'POST', headers:{'Content-Type':'application/json'}, signal:AbortSignal.timeout(18000), body:JSON.stringify({business,language:$('language').value,highlights,notes}) });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Couldn’t write a draft. Please try again.');
+        const unavailable = 'AI writing isn’t connected on this page. You can still write your review and copy it to Google.';
+        // Static hosts and sign-in redirects can return HTML, even with HTTP 200.
+        if (!response.headers.get('Content-Type')?.toLowerCase().includes('application/json')) throw new Error(unavailable);
+        let data;
+        try { data = await response.json(); } catch { throw new Error(unavailable); }
+        if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error(unavailable);
+        if (!response.ok) throw new Error(typeof data.error === 'string' ? data.error : 'Couldn’t write a draft. Please try again.');
         if (typeof data.review !== 'string' || !data.review.trim()) throw new Error('No draft came back. Please try again.');
         $('review').value = data.review; message('Draft ready. Check it before posting.'); $('review').focus();
-      } catch(error) { message(error.name === 'TimeoutError' ? 'That took too long. Please try again.' : error.message,true); }
+      } catch(error) { message(error.name === 'TimeoutError' ? 'That took too long. Please try again.' : error instanceof TypeError ? 'Couldn’t connect to AI writing. Check your connection and try again.' : error.message,true); }
       finally { $('generate').disabled = false; $('copy').disabled = false; $('review').readOnly = false; $('generate').textContent = 'Help me write it'; }
     });
     $('copy').addEventListener('click',async () => {
@@ -120,6 +127,7 @@
     });
     $('setup-form').addEventListener('submit',event => {
       event.preventDefault(); $('share').hidden = true;
+      if (!isWebsite) return message('Open the hosted website to create a customer link.',true,'setup-status');
       const name = $('name').value.trim(), review = googleLink($('google').value.trim());
       if (!name || !review) return message('Enter a business name and a valid Google review link.',true,'setup-status');
       const url = new URL(location.origin + location.pathname); url.search = new URLSearchParams({name,review});
